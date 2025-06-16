@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "author": "MANOJ KUMAR REDDY K EC-2022-26",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-breadboard-mini", "id": "bb2", "top": 75.4, "left": -60, "attrs": {} },
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": -22.46, "left": 230.19, "attrs": {} },
+    {
+      "type": "wokwi-lcd1602",
+      "id": "lcd1",
+      "top": -348.8,
+      "left": 92,
+      "attrs": { "pins": "i2c" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led1",
+      "top": -176.4,
+      "left": 147.8,
+      "attrs": { "color": "red" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": -81.6,
+      "left": 143.45,
+      "rotate": 90,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-dht22",
+      "id": "dht1",
+      "top": -86.1,
+      "left": -149.4,
+      "attrs": { "humidity": "34", "temperature": "16.5" }
+    }
+  ],
+  "connections": [
+    [ "esp:TX0", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX0", "$serialMonitor:TX", "", [] ],
+    [ "esp:D22", "lcd1:SCL", "green", [ "h7.85", "v-38.27", "h-281.16", "v-190.97" ] ],
+    [ "esp:D21", "lcd1:SDA", "green", [ "h14.04", "v-74.24", "h-295.3", "v-188.32" ] ],
+    [ "esp:VIN", "bb2:14b.f", "red", [ "h0" ] ],
+    [ "esp:GND.2", "bb2:13b.f", "black", [ "h0" ] ],
+    [ "lcd1:GND", "bb2:13b.i", "black", [ "h-50.64", "v262.45" ] ],
+    [ "lcd1:VCC", "bb2:14b.h", "red", [ "h-36.2", "v265.08" ] ],
+    [ "led1:A", "r1:1", "green", [ "v0" ] ],
+    [ "r1:2", "esp:D32", "green", [ "h0", "v94.8" ] ],
+    [ "led1:C", "bb2:13b.g", "black", [ "h-95.6", "v297.6" ] ],
+    [ "dht1:GND", "bb2:13b.h", "black", [ "v0" ] ],
+    [ "dht1:SIG", "esp:D33", "blue", [ "v0" ] ],
+    [ "dht1:VCC", "esp:3V3", "red", [ "v0" ] ],
+    [ "dht1:SDA", "esp:D33", "green", [ "v0" ] ]
+  ],
+  "dependencies": {}
+}
