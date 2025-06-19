@@ -26,6 +26,37 @@ int ICA_max = 0;
 unsigned long lastUpdate = 0;
 const unsigned long updateInterval = 2000;
 
+void getRoutineDataFromApi() {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String deviceId = "dehumidifier_chakiy_001";
+    String url = "http://host.wokwi.internal:5000/api/v1/routine-monitoring/data-records/iot-device/" + deviceId;
+
+    Serial.print("Haciendo GET a: ");
+    Serial.println(url);
+
+    http.begin(url);
+    http.addHeader("X-API-Key", "apichakiykey"); 
+
+    int httpResponseCode = http.GET();
+
+    if (httpResponseCode > 0) {
+      Serial.print("Respuesta GET (código ");
+      Serial.print(httpResponseCode);
+      Serial.println("):");
+      String responseBody = http.getString();
+      Serial.println(responseBody);
+    } else {
+      Serial.print("Error en GET. Código HTTP: ");
+      Serial.println(httpResponseCode);
+    }
+
+    http.end();
+  } else {
+    Serial.println("No hay conexión WiFi.");
+  }
+}
+
 void sendToEdgeApi(float temp, float hum, int ica, int ica_min) {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
@@ -58,38 +89,18 @@ void sendToEdgeApi(float temp, float hum, int ica, int ica_min) {
     }
 
     http.end(); 
-
-    HTTPClient httpGet;
-    httpGet.begin(url);
-    httpGet.addHeader("X-API-Key", "apichakiykey");
-
-    int getResponseCode = httpGet.GET();
-
-    if (getResponseCode > 0) {
-      Serial.print("GET realizado. Código HTTP: ");
-      Serial.println(getResponseCode);
-      String responseBody = httpGet.getString();
-      Serial.println("Respuesta del servidor:");
-      Serial.println(responseBody);
-    } else {
-      Serial.print("Error en GET. Código HTTP: ");
-      Serial.println(getResponseCode);
-    }
-
-    httpGet.end(); 
   } else {
     Serial.println("No hay conexión WiFi.");
   }
 }
 
+
 void checkEnvironment(float temp, float hum) {
-  bool tempOk = temp <= 21.6;  // Se considera seguro si es menor o igual
+  bool tempOk = temp <= 21.6;  
   bool humOk = hum < 30 || hum > 50 ? false : true;
 
-  // ICA dinámico (puedes ajustar la fórmula)
   ICA = (int)(abs(temp - 22) * 2 + abs(hum - 50) * 0.5);
 
-  // Actualizar ICA mínimo y máximo
   if (ICA < ICA_min) ICA_min = ICA;
   if (ICA > ICA_max) ICA_max = ICA;
 
@@ -118,6 +129,10 @@ void checkEnvironment(float temp, float hum) {
 }
 
 void updateSensorData() {
+
+  getRoutineDataFromApi();
+
+  
   temperature = dht.readTemperature();
   humidity = dht.readHumidity();
 
@@ -163,4 +178,3 @@ void loop() {
     updateSensorData();
   }
 }
-// ...existing code...
