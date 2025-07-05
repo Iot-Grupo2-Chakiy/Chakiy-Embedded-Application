@@ -9,8 +9,7 @@
 #define DHTPIN 33
 #define DHTTYPE DHT22
 DHT dht(DHTPIN, DHTTYPE);
-
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+LiquidCrystal_I2C lcd(0x27, 20, 4);
 
 const int ledPin = 32;
 
@@ -26,15 +25,19 @@ float humidity_max_device = 0.0;
 bool estado_device = false;  
 bool estado_device_original = false; 
 String active_device_type = "";
+String api_error_message = "";
 
-String deviceId = "SoyPrueba";
+
+//String serverIP = "172.20.10.2";
+String serverIP = "host.wokwi.internal";
+String deviceId = "PruebaOtraVes";
 
 unsigned long lastSensorUpdate = 0;
 unsigned long lastApiUpdate = 0;
 unsigned long lastRoutineCheck = 0;
 const unsigned long sensorUpdateInterval = 5000;   
-const unsigned long apiUpdateInterval = 30000;      
-const unsigned long routineCheckInterval = 30000;  
+const unsigned long apiUpdateInterval = 10000;      
+const unsigned long routineCheckInterval = 10000;  
 
 struct Routine {
   int id;
@@ -171,11 +174,21 @@ void checkActiveRoutines() {
   
   Serial.println("==============================");
   
+  // Las rutinas tienen PRIORIDAD ABSOLUTA sobre decisiones manuales del usuario
+  // Si hay una rutina válida, el dispositivo DEBE activarse independientemente del estado manual
+  
   if (routineActive) {
     if (!estado_device) {
       Serial.println(">>> DISPOSITIVO ACTIVADO POR RUTINA <<<");
       Serial.print("Rutina activa: "); Serial.println(activeRoutineName);
       Serial.print("Tipo de dispositivo: "); Serial.println(deviceType);
+      
+
+      if (!estado_device_original) {
+        Serial.println(">>> RUTINA OVERRIDE - IGNORANDO ESTADO MANUAL DEL USUARIO <<<");
+        Serial.println("    Las rutinas programadas tienen prioridad absoluta");
+      }
+      
       estado_device = true;
       active_device_type = deviceType;
     } else {
@@ -185,14 +198,13 @@ void checkActiveRoutines() {
     }
   } else {
     if (estado_device && !estado_device_original) {
-      Serial.println(">>> DISPOSITIVO DESACTIVADO - FIN DE RUTINA <<<");
       estado_device = false;
       active_device_type = "";
     } else if (estado_device_original) {
-      Serial.println("Dispositivo permanece activo (estado del servidor)");
+      estado_device = true;
       active_device_type = "Deshumidificador";
     } else {
-      Serial.println("No hay rutinas activas - dispositivo inactivo");
+      estado_device = false;
       active_device_type = "";
     }
   }
@@ -202,17 +214,13 @@ void checkActiveRoutines() {
   if (estado_device && active_device_type.length() > 0) {
     Serial.print("Tipo de dispositivo activo: "); Serial.println(active_device_type);
   }
-  Serial.println("================================");
-  Serial.println("");
+
 }
 
 void getRoutineDataFromApi() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    String url = "http://host.wokwi.internal:5000/api/v1/routine-monitoring/data-records/iot-device/" + deviceId;
-
-    Serial.print("Haciendo GET a rutinas: ");
-    Serial.println(url);
+    String url = "http://" + serverIP + ":5000/api/v1/routine-monitoring/data-records/iot-device/" + deviceId;
 
     http.begin(url);
     http.addHeader("X-API-Key", "apichakiykey"); 
@@ -220,11 +228,7 @@ void getRoutineDataFromApi() {
     int httpResponseCode = http.GET();
 
     if (httpResponseCode > 0) {
-      Serial.print("Respuesta GET rutinas (código ");
-      Serial.print(httpResponseCode);
-      Serial.println("):");
       String responseBody = http.getString();
-      Serial.println(responseBody);
       
       if (httpResponseCode == 200) {
         DynamicJsonDocument doc(2048);
@@ -340,7 +344,7 @@ void getRoutineDataFromApi() {
 void getDeviceInfoFromApi() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    String url = "http://host.wokwi.internal:5000/api/v1/health-dehumidifier/get-dehumidifier?device_id=" + deviceId;
+    String url = "http://" + serverIP + ":5000/api/v1/health-dehumidifier/get-dehumidifier?device_id=" + deviceId;
 
     Serial.print("Obteniendo info del dispositivo: ");
     Serial.println(url);
@@ -373,12 +377,33 @@ void getDeviceInfoFromApi() {
             Temp_max_device = humidifier_info["temperaturaMax"].as<float>();
             humidity_min_device = humidifier_info["humedadMin"].as<float>();
             humidity_max_device = humidifier_info["humedadMax"].as<float>();
-            estado_device_original = humidifier_info["estado"].as<bool>();
             
-            if (!estado_device) {
-              estado_device = estado_device_original;
-              if (estado_device_original) {
+            bool new_estado_device_original = humidifier_info["estado"].as<bool>();
+            
+            if (new_estado_device_original != estado_device_original) {
+              Serial.println("=== CAMBIO MANUAL DEL USUARIO DETECTADO ===");
+              Serial.print("Estado anterior: "); Serial.println(estado_device_original ? "ACTIVO" : "INACTIVO");
+              Serial.print("Estado nuevo: "); Serial.println(new_estado_device_original ? "ACTIVO" : "INACTIVO");
+              
+              if (!new_estado_device_original && estado_device_original) {
+                Serial.println(">>> DISPOSITIVO APAGADO POR USUARIO <<<");
+                estado_device = false;
+                active_device_type = "";
+              }
+              else if (new_estado_device_original && !estado_device_original) {
+                Serial.println(">>> DISPOSITIVO ENCENDIDO POR USUARIO <<<");
+                estado_device = true;
                 active_device_type = "Deshumidificador";
+              }
+              
+              estado_device_original = new_estado_device_original;
+              Serial.println("============================================");
+            } else {
+              if (!estado_device) {
+                estado_device = estado_device_original;
+                if (estado_device_original) {
+                  active_device_type = "Deshumidificador";
+                }
               }
             }
             
@@ -421,7 +446,7 @@ void sendToEdgeApi(float temp, float hum, int ica) {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
 
-    const char* url = "http://host.wokwi.internal:5000/api/v1/health-dehumidifier/data-records";
+    String url = "http://" + serverIP + ":5000/api/v1/health-dehumidifier/data-records";
 
     Serial.print("Conectando a la API en: ");
     Serial.println(url);
@@ -438,17 +463,23 @@ void sendToEdgeApi(float temp, float hum, int ica) {
 
     int httpResponseCode = http.POST(payload);
 
-    if (httpResponseCode > 0) {
-      Serial.print("Datos enviados. Código HTTP: ");
+    if (httpResponseCode > 0 && httpResponseCode >= 200 && httpResponseCode < 300) {
+      Serial.print("Datos enviados exitosamente. Código HTTP: ");
       Serial.println(httpResponseCode);
-    } else {
+      api_error_message = "";
+    } else if (httpResponseCode > 0) {
       Serial.print("Error al enviar datos. Código HTTP: ");
       Serial.println(httpResponseCode);
+      api_error_message = "ERROR: Servidor " + String(httpResponseCode);
+    } else {
+      Serial.println("Error de conexión al servidor");
+      api_error_message = "ERROR: Sin servidor";
     }
 
     http.end(); 
   } else {
     Serial.println("No hay conexión WiFi.");
+    api_error_message = "ERROR: Sin WiFi";
   }
 }
 
@@ -460,10 +491,32 @@ void checkEnvironment(float temp, float hum) {
 
   lcd.clear();
 
-  if ((tempOk && humOk) || estado_device)
+  if (estado_device && (!tempOk || !humOk)) {
+    Serial.println(">>> DISPOSITIVO APAGADO AUTOMÁTICAMENTE - FUERA DE UMBRALES DE SEGURIDAD <<<");
+    estado_device = false;
+    active_device_type = "";
+    
+    if (!tempOk && !humOk) {
+      Serial.println("ALERTA: Temperatura Y humedad fuera de rango de seguridad");
+    } else if (!tempOk) {
+      Serial.print("ALERTA: Temperatura fuera de rango de seguridad (");
+      Serial.print(Temp_min_device);
+      Serial.print("-");
+      Serial.print(Temp_max_device);
+      Serial.println(")");
+    } else if (!humOk) {
+      Serial.print("ALERTA: Humedad fuera de rango de seguridad (");
+      Serial.print(humidity_min_device);
+      Serial.print("-");
+      Serial.print(humidity_max_device);
+      Serial.println(")");
+    }
+  }
+
+  if (estado_device)
   {
     lcd.setCursor(0, 0);
-    if (estado_device && active_device_type.length() > 0) {
+    if (active_device_type.length() > 0) {
       if (active_device_type == "Deshumidificador") {
         lcd.print("Deshumidif. ON");
       } else {
@@ -474,45 +527,41 @@ void checkEnvironment(float temp, float hum) {
     }
     digitalWrite(ledPin, HIGH);
     
-    if (estado_device) {
-      if (active_device_type.length() > 0) {
-        Serial.print("INFO: "); Serial.print(active_device_type); Serial.println(" ON por rutina/servidor");
-      } else {
-        Serial.println("INFO: Deshumidificador ON por rutina/servidor");
-      }
+    if (active_device_type.length() > 0) {
+      Serial.print("INFO: "); Serial.print(active_device_type); Serial.println(" ON por rutina/servidor (rutinas tienen prioridad)");
     } else {
-      Serial.println("INFO: Deshumidificador ON por condiciones óptimas");
+      Serial.println("INFO: Deshumidificador ON por rutina/servidor (rutinas tienen prioridad)");
     }
   }
   else
   {
     lcd.setCursor(0, 0);
-    lcd.print("Ambiente MAL");
+    lcd.print("Dispositivo OFF");
     digitalWrite(ledPin, LOW);
     
     if (!tempOk && !humOk)
     {
-      Serial.println("ALERTA: Temperatura Y humedad fuera de rango");
+      Serial.println("INFO: Temperatura Y humedad fuera de rango - Dispositivo OFF");
     }
     else if (!tempOk)
     {
-      Serial.print("ALERTA: Temperatura fuera de rango (");
+      Serial.print("INFO: Temperatura fuera de rango (");
       Serial.print(Temp_min_device);
       Serial.print("-");
       Serial.print(Temp_max_device);
-      Serial.println(")");
+      Serial.println(") - Dispositivo OFF");
     }
     else if (!humOk)
     {
-      Serial.print("ALERTA: Humedad fuera de rango (");
+      Serial.print("INFO: Humedad fuera de rango (");
       Serial.print(humidity_min_device);
       Serial.print("-");
       Serial.print(humidity_max_device);
-      Serial.println(")");
+      Serial.println(") - Dispositivo OFF");
     }
-    else if (!estado_device)
+    else
     {
-      Serial.println("INFO: Dispositivo desactivado desde el servidor");
+      Serial.println("INFO: Condiciones ambientales óptimas - Dispositivo OFF (esperando rutina o activación manual)");
     }
   }
 
@@ -524,6 +573,27 @@ void checkEnvironment(float temp, float hum) {
   lcd.print("%");
   lcd.print("ICA:");
   lcd.print(ICA);
+  
+  // Mostrar mensaje específico de error en la tercera línea del LCD
+  if (api_error_message.length() > 0) {
+    lcd.setCursor(0, 2);
+    lcd.print(api_error_message);
+    for (int i = api_error_message.length(); i < 20; i++) {
+      lcd.print(" ");
+    }
+  } else {
+    lcd.setCursor(0, 2);
+    lcd.print("                    "); // Limpiar línea si no hay error
+  }
+  
+  // Mostrar IP del servidor en la cuarta línea del LCD
+  lcd.setCursor(0, 3);
+  lcd.print("IP: ");
+  lcd.print(serverIP);
+  // Completar con espacios para limpiar caracteres sobrantes
+  for (int i = serverIP.length() + 4; i < 20; i++) {
+    lcd.print(" ");
+  }
 }
 
 void updateSensorData() {
@@ -545,10 +615,71 @@ void updateSensorData() {
   }
 }
 
+void printConnectionInfo() {
+  Serial.println("========================================");
+  Serial.println("=== INFORMACIÓN DE CONECTIVIDAD ===");
+  Serial.print("ESP32 conectado a WiFi: "); 
+  Serial.println(WiFi.SSID());
+  Serial.print("IP del ESP32: "); 
+  Serial.println(WiFi.localIP());
+  Serial.print("IP del servidor configurada: "); 
+  Serial.println(serverIP);
+  Serial.print("Puerto del servidor: 5000");
+  Serial.println();
+  Serial.print("URL base de la API: http://"); 
+  Serial.print(serverIP); 
+  Serial.println(":5000");
+  Serial.println("========================================");
+  Serial.println();
+}
+
+void processSerialCommands() {
+  if (Serial.available() > 0) {
+    String command = Serial.readStringUntil('\n');
+    command.trim(); 
+    
+    if (command.startsWith("IP:")) {
+      String newIP = command.substring(3); // Extraer la IP después de "IP:"
+      newIP.trim();
+      
+      // Validar que la IP no esté vacía
+      if (newIP.length() > 0) {
+        serverIP = newIP;
+        Serial.println("========================================");
+        Serial.println("=== IP DEL SERVIDOR ACTUALIZADA ===");
+        Serial.print("Nueva IP configurada: ");
+        Serial.println(serverIP);
+        Serial.print("Nueva URL base: http://");
+        Serial.print(serverIP);
+        Serial.println(":5000");
+        Serial.println("========================================");
+        Serial.println();
+        
+        // Opcional: Hacer una prueba de conectividad inmediatamente
+        Serial.println("Probando conectividad con la nueva IP...");
+        getDeviceInfoFromApi();
+      } else {
+        Serial.println("ERROR: IP vacía. Formato correcto: IP:192.168.1.100");
+      }
+    } else if (command.equals("HELP") || command.equals("help")) {
+      Serial.println("========================================");
+      Serial.println("=== COMANDOS DISPONIBLES ===");
+      Serial.println("IP:x.x.x.x    - Cambiar IP del servidor");
+      Serial.println("              - Ejemplo: IP:192.168.1.100");
+      Serial.println("HELP          - Mostrar esta ayuda");
+      Serial.println("INFO          - Mostrar información actual");
+      Serial.println("========================================");
+    } else if (command.equals("INFO") || command.equals("info")) {
+      printConnectionInfo();
+    } else if (command.length() > 0) {
+      Serial.println("Comando no reconocido. Envía 'HELP' para ver comandos disponibles.");
+    }
+  }
+}
+
 void setup() {
   Serial.begin(9600);
 
-  //Cambiar por red wifi real
   WiFi.begin("Wokwi-GUEST", "");
 
   dht.begin();
@@ -564,6 +695,9 @@ void setup() {
     Serial.print(".");
   }
   Serial.println(" Conectado!");
+  
+  printConnectionInfo();
+    
   configTime(-5 * 3600, 0, "pool.ntp.org", "time.nist.gov"); 
   getDeviceInfoFromApi();
   getRoutineDataFromApi();
@@ -589,4 +723,6 @@ void loop() {
     lastRoutineCheck = now;
     checkActiveRoutines();
   }
+
+  processSerialCommands();
 }
